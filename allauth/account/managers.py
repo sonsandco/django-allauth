@@ -1,5 +1,7 @@
 from datetime import timedelta
 
+from django.conf import settings
+from django.contrib.sites.managers import CurrentSiteManager
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
@@ -7,7 +9,7 @@ from django.utils import timezone
 from . import app_settings
 
 
-class EmailAddressManager(models.Manager):
+class EmailAddressManagerMixin:
     def can_add_email(self, user):
         ret = True
         if app_settings.MAX_EMAIL_ADDRESSES:
@@ -61,6 +63,27 @@ class EmailAddressManager(models.Manager):
                 if address.email.lower() == email.lower():
                     return address
             raise self.model.DoesNotExist()
+
+
+if getattr(settings, 'VARY_TOP_LEVEL_MODEL_BY_SITE', False):
+    class EmailAddressManager(EmailAddressManagerMixin, CurrentSiteManager):
+        use_in_migrations = True
+
+        def get_queryset(self):
+            if not (hasattr(self, '_get_field_name') and getattr(
+                    settings, 'STAFF_ACCOUNT_MULTI_SITE', False)):
+                return super().get_queryset()
+
+            # The first filter is copied from CurrentSiteManager. To that, we
+            # add an exception for staff members, who have one account shared
+            # between all sites.
+            return super(CurrentSiteManager, self).get_queryset().filter(
+                models.Q(**{
+                    self._get_field_name() + '__id': settings.SITE_ID
+                }) | models.Q(user__is_staff=True))
+else:
+    class EmailAddressManager(EmailAddressManagerMixin, models.Manager):
+        pass
 
 
 class EmailConfirmationManager(models.Manager):

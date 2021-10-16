@@ -2,6 +2,8 @@ from __future__ import unicode_literals
 
 import datetime
 
+from django.conf import settings
+from django.contrib.sites.models import Site
 from django.core import signing
 from django.db import models, transaction
 from django.utils import timezone
@@ -23,19 +25,23 @@ class EmailAddress(models.Model):
         on_delete=models.CASCADE,
     )
     email = models.EmailField(
-        unique=app_settings.UNIQUE_EMAIL,
         max_length=app_settings.EMAIL_MAX_LENGTH,
         verbose_name=_("e-mail address"),
     )
     verified = models.BooleanField(verbose_name=_("verified"), default=False)
     primary = models.BooleanField(verbose_name=_("primary"), default=False)
 
+    site = models.ForeignKey(Site, default=settings.SITE_ID,
+                             on_delete=models.PROTECT, editable=False)
+
     objects = EmailAddressManager()
 
     class Meta:
         verbose_name = _("email address")
         verbose_name_plural = _("email addresses")
-        if not app_settings.UNIQUE_EMAIL:
+        if app_settings.UNIQUE_EMAIL:
+            unique_together = [("site", "email")]
+        else:
             unique_together = [("user", "email")]
 
     def __str__(self):
