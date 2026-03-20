@@ -1,5 +1,3 @@
-from __future__ import absolute_import
-
 from datetime import datetime
 
 from allauth.socialaccount import app_settings
@@ -9,21 +7,15 @@ from allauth.socialaccount.providers.oauth.views import (
     OAuthLoginView,
 )
 
-from .provider import EvernoteProvider
-
 
 class EvernoteOAuthAdapter(OAuthAdapter):
-    provider_id = EvernoteProvider.id
+    provider_id = "evernote"
     settings = app_settings.PROVIDERS.get(provider_id, {})
-    request_token_url = "https://%s/oauth" % (
-        settings.get("EVERNOTE_HOSTNAME", "sandbox.evernote.com")
-    )
-    access_token_url = "https://%s/oauth" % (
-        settings.get("EVERNOTE_HOSTNAME", "sandbox.evernote.com")
-    )
-    authorize_url = "https://%s/OAuth.action" % (
-        settings.get("EVERNOTE_HOSTNAME", "sandbox.evernote.com")
-    )
+    _hostname = settings.get("EVERNOTE_HOSTNAME", "sandbox.evernote.com")
+    request_token_url = f"https://{_hostname}/oauth"
+    access_token_url = f"https://{_hostname}/oauth"
+    authorize_url = f"https://{_hostname}/OAuth.action"
+    del _hostname
 
     def complete_login(self, request, app, token, response):
         token.expires_at = datetime.fromtimestamp(

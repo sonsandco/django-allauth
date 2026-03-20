@@ -1,16 +1,17 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-
-from django.db import models, migrations
 from django.conf import settings
-import allauth.socialaccount.fields
-from allauth.socialaccount.providers import registry
+from django.db import migrations, models
+
+from allauth import app_settings
 
 
 class Migration(migrations.Migration):
-
-    dependencies = [
-        ("sites", "0001_initial"),
+    dependencies = (
+        [
+            ("sites", "0001_initial"),
+        ]
+        if app_settings.SITES_ENABLED
+        else []
+    ) + [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
@@ -32,7 +33,6 @@ class Migration(migrations.Migration):
                     models.CharField(
                         max_length=30,
                         verbose_name="provider",
-                        choices=registry.as_choices(),
                     ),
                 ),
                 (
@@ -54,9 +54,7 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "extra_data",
-                    allauth.socialaccount.fields.JSONField(
-                        default="{}", verbose_name="extra data"
-                    ),
+                    models.TextField(default="{}", verbose_name="extra data"),
                 ),
                 (
                     "user",
@@ -88,7 +86,6 @@ class Migration(migrations.Migration):
                     models.CharField(
                         max_length=30,
                         verbose_name="provider",
-                        choices=registry.as_choices(),
                     ),
                 ),
                 ("name", models.CharField(max_length=40, verbose_name="name")),
@@ -117,8 +114,14 @@ class Migration(migrations.Migration):
                         blank=True,
                     ),
                 ),
-                ("sites", models.ManyToManyField(to="sites.Site", blank=True)),
-            ],
+            ]
+            + (
+                [
+                    ("sites", models.ManyToManyField(to="sites.Site", blank=True)),
+                ]
+                if app_settings.SITES_ENABLED
+                else []
+            ),
             options={
                 "verbose_name": "social application",
                 "verbose_name_plural": "social applications",
@@ -180,10 +183,10 @@ class Migration(migrations.Migration):
         ),
         migrations.AlterUniqueTogether(
             name="socialtoken",
-            unique_together=set([("app", "account")]),
+            unique_together={("app", "account")},
         ),
         migrations.AlterUniqueTogether(
             name="socialaccount",
-            unique_together=set([("provider", "uid")]),
+            unique_together={("provider", "uid")},
         ),
     ]

@@ -1,8 +1,6 @@
 from allauth.socialaccount import app_settings
-from allauth.socialaccount.providers.base import (
-    ProviderAccount,
-    ProviderException,
-)
+from allauth.socialaccount.providers.base import ProviderAccount, ProviderException
+from allauth.socialaccount.providers.linkedin_oauth2.views import LinkedInOAuth2Adapter
 from allauth.socialaccount.providers.oauth2.provider import OAuth2Provider
 
 
@@ -18,9 +16,7 @@ def _extract_name_field(data, field_name):
             preferred_locale = v.get(
                 "preferredLocale", {"country": "US", "language": "en"}
             )
-            locale_key = "_".join(
-                [preferred_locale["language"], preferred_locale["country"]]
-            )
+            locale_key = f"{preferred_locale['language']}_{preferred_locale['country']}"
             if locale_key in localized:
                 ret = localized.get(locale_key)
             elif localized:
@@ -42,11 +38,13 @@ def _extract_email(data):
 
 class LinkedInOAuth2Account(ProviderAccount):
     def to_str(self):
-        ret = super(LinkedInOAuth2Account, self).to_str()
+        ret = super().to_str()
+        if self.account.extra_data.get("emailAddress"):
+            return self.account.extra_data["emailAddress"]
         first_name = _extract_name_field(self.account.extra_data, "firstName")
         last_name = _extract_name_field(self.account.extra_data, "lastName")
         if first_name or last_name:
-            ret = " ".join([first_name, last_name]).strip()
+            ret = f"{first_name} {last_name}".strip()
         return ret
 
     def get_avatar_url(self):
@@ -63,7 +61,7 @@ class LinkedInOAuth2Account(ProviderAccount):
         # Can't get the avatar when this field is not specified
         picture_field = "profilePicture(displayImage~:playableStreams)"
         if picture_field not in configured_profile_fields:
-            return super(LinkedInOAuth2Account, self).get_avatar_url()
+            return super().get_avatar_url()
         # Iterate over the fields and attempt to get it by configured size
         profile_picture_config = provider_configuration.get("PROFILEPICTURE", {})
         req_size = profile_picture_config.get("display_size_w_h", (100.0, 100.0))
@@ -91,12 +89,17 @@ class LinkedInOAuth2Account(ProviderAccount):
             if not width == req_size[0] or not height == req_size[1]:
                 continue
             # Get the uri since actual size matches the requested size.
-            to_return = single_element.get("identifiers", [{},])[
+            to_return = single_element.get(
+                "identifiers",
+                [
+                    {},
+                ],
+            )[
                 0
             ].get("identifier")
             if to_return:
                 return to_return
-        return super(LinkedInOAuth2Account, self).get_avatar_url()
+        return super().get_avatar_url()
 
 
 class LinkedInOAuth2Provider(OAuth2Provider):
@@ -104,6 +107,7 @@ class LinkedInOAuth2Provider(OAuth2Provider):
     # Name is displayed to ordinary users -- don't include protocol
     name = "LinkedIn"
     account_class = LinkedInOAuth2Account
+    oauth2_adapter_class = LinkedInOAuth2Adapter
 
     def extract_uid(self, data):
         if "id" not in data:

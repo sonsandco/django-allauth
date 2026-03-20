@@ -1,0 +1,74 @@
+import json
+from http import HTTPStatus
+
+from django.test import TestCase
+
+from allauth.socialaccount.models import SocialAccount
+from allauth.socialaccount.providers.battlenet.provider import BattleNetProvider
+from allauth.socialaccount.providers.battlenet.views import _check_errors
+from allauth.socialaccount.providers.oauth2.client import OAuth2Error
+from tests.apps.socialaccount.base import OAuth2TestsMixin
+from tests.mocking import MockedResponse
+
+
+class BattleNetTests(OAuth2TestsMixin, TestCase):
+    provider_id = BattleNetProvider.id
+    _uid = 123456789
+    _battletag = "LuckyDragon#1953"
+
+    def get_mocked_response(self):
+        data = {"battletag": self._battletag, "id": self._uid}
+        return MockedResponse(HTTPStatus.OK, json.dumps(data))
+
+    def get_expected_to_str(self):
+        return self._battletag
+
+    def test_valid_response_no_battletag(self):
+        data = {"id": 12345}
+        response = MockedResponse(HTTPStatus.OK, json.dumps(data))
+        self.assertEqual(_check_errors(response), data)
+
+    def test_invalid_data(self):
+        response = MockedResponse(HTTPStatus.OK, json.dumps({}))
+        with self.assertRaises(OAuth2Error):
+            # No id, raises
+            _check_errors(response)
+
+    def test_profile_invalid_response(self):
+        data = {
+            "code": HTTPStatus.FORBIDDEN,
+            "type": "Forbidden",
+            "detail": "Account Inactive",
+        }
+        response = MockedResponse(HTTPStatus.UNAUTHORIZED, json.dumps(data))
+
+        with self.assertRaises(OAuth2Error):
+            # no id, 4xx code, raises
+            _check_errors(response)
+
+    def test_error_response(self):
+        body = json.dumps({"error": "invalid_token"})
+        response = MockedResponse(HTTPStatus.BAD_REQUEST, body)
+
+        with self.assertRaises(OAuth2Error):
+            # no id, 4xx code, raises
+            _check_errors(response)
+
+    def test_service_not_found(self):
+        response = MockedResponse(596, "<h1>596 Service Not Found</h1>")
+        with self.assertRaises(OAuth2Error):
+            # bad json, 5xx code, raises
+            _check_errors(response)
+
+    def test_invalid_response(self):
+        response = MockedResponse(HTTPStatus.OK, "invalid json data")
+        with self.assertRaises(OAuth2Error):
+            # bad json, raises
+            _check_errors(response)
+
+    def test_extra_data(self):
+        self.login(self.get_mocked_response())
+        account = SocialAccount.objects.get(uid=str(self._uid))
+        self.assertEqual(account.extra_data["battletag"], self._battletag)
+        self.assertEqual(account.extra_data["id"], self._uid)
+        self.assertEqual(account.extra_data["region"], "us")

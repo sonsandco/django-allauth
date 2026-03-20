@@ -1,18 +1,15 @@
-import requests
-
 from allauth.socialaccount import app_settings
+from allauth.socialaccount.adapter import get_adapter
 from allauth.socialaccount.providers.oauth2.views import (
     OAuth2Adapter,
     OAuth2CallbackView,
     OAuth2LoginView,
 )
 
-from .provider import RedditProvider
-
 
 class RedditAdapter(OAuth2Adapter):
-    provider_id = RedditProvider.id
-    access_token_url = "https://www.reddit.com/api/v1/access_token"
+    provider_id = "reddit"
+    access_token_url = "https://www.reddit.com/api/v1/access_token"  # nosec
     authorize_url = "https://www.reddit.com/api/v1/authorize"
     profile_url = "https://oauth.reddit.com/api/v1/me"
     basic_auth = True
@@ -22,15 +19,16 @@ class RedditAdapter(OAuth2Adapter):
     headers = {"User-Agent": settings.get("USER_AGENT", "django-allauth-header")}
 
     def complete_login(self, request, app, token, **kwargs):
-        headers = {"Authorization": "bearer " + token.token}
-        headers.update(self.headers)
-        extra_data = requests.get(self.profile_url, headers=headers)
+        headers = {"Authorization": f"bearer {token.token}", **self.headers}
+        with get_adapter().get_requests_session() as sess:
+            resp = sess.get(self.profile_url, headers=headers)
 
-        # This only here because of weird response from the test suite
-        if isinstance(extra_data, list):
-            extra_data = extra_data[0]
+            # This only here because of weird response from the test suite
+            if isinstance(resp, list):
+                resp = resp[0]
 
-        return self.get_provider().sociallogin_from_response(request, extra_data.json())
+            extra_data = resp.json()
+        return self.get_provider().sociallogin_from_response(request, extra_data)
 
 
 oauth2_login = OAuth2LoginView.adapter_view(RedditAdapter)

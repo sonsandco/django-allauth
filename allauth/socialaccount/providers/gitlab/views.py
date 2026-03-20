@@ -1,8 +1,9 @@
-# -*- coding: utf-8 -*-
-import requests
+from http import HTTPStatus
 
+from allauth.core import context
 from allauth.socialaccount import app_settings
-from allauth.socialaccount.providers.gitlab.provider import GitLabProvider
+from allauth.socialaccount.adapter import get_adapter
+from allauth.socialaccount.providers.oauth2.client import OAuth2Error
 from allauth.socialaccount.providers.oauth2.views import (
     OAuth2Adapter,
     OAuth2CallbackView,
@@ -10,24 +11,66 @@ from allauth.socialaccount.providers.oauth2.views import (
 )
 
 
+def _check_errors(response):
+    #  403 error's are presented as user-facing errors
+    if response.status_code == HTTPStatus.FORBIDDEN:
+        msg = response.content
+        raise OAuth2Error(f"Invalid data from GitLab API: {msg!r}")
+
+    try:
+        data = response.json()
+    except ValueError:  # JSONDecodeError on py3
+        raise OAuth2Error(f"Invalid JSON from GitLab API: {response.text!r}")
+
+    if response.status_code >= HTTPStatus.BAD_REQUEST or "error" in data:
+        # For errors, we expect the following format:
+        # {"error": "error_name", "error_description": "Oops!"}
+        # For example, if the token is not valid, we will get:
+        # {"message": "status_code - message"}
+        error = data.get("error", "") or response.status_code
+        desc = data.get("error_description", "") or data.get("message", "")
+
+        raise OAuth2Error(f"GitLab error: {error} ({desc})")
+
+    # The expected output from the API follows this format:
+    # {"id": 12345, ...}
+    if "id" not in data:
+        # If the id is not present, the output is not usable (no UID)
+        raise OAuth2Error(f"Invalid data from GitLab API: {data!r}")
+
+    return data
+
+
 class GitLabOAuth2Adapter(OAuth2Adapter):
-    provider_id = GitLabProvider.id
+    provider_id = "gitlab"
     provider_default_url = "https://gitlab.com"
     provider_api_version = "v4"
 
-    settings = app_settings.PROVIDERS.get(provider_id, {})
-    provider_base_url = settings.get("GITLAB_URL", provider_default_url)
+    def _build_url(self, path):
+        settings = app_settings.PROVIDERS.get(self.provider_id, {})
+        gitlab_url = settings.get("GITLAB_URL", self.provider_default_url)
+        # Prefer app based setting.
+        app = get_adapter().get_app(context.request, provider=self.provider_id)
+        gitlab_url = app.settings.get("gitlab_url", gitlab_url)
+        return f"{gitlab_url}{path}"
 
-    access_token_url = "{0}/oauth/token".format(provider_base_url)
-    authorize_url = "{0}/oauth/authorize".format(provider_base_url)
-    profile_url = "{0}/api/{1}/user".format(provider_base_url, provider_api_version)
+    @property
+    def access_token_url(self):
+        return self._build_url("/oauth/token")
+
+    @property
+    def authorize_url(self):
+        return self._build_url("/oauth/authorize")
+
+    @property
+    def profile_url(self):
+        return self._build_url(f"/api/{self.provider_api_version}/user")
 
     def complete_login(self, request, app, token, response):
-        extra_data = requests.get(
-            self.profile_url, params={"access_token": token.token}
-        )
-
-        return self.get_provider().sociallogin_from_response(request, extra_data.json())
+        with get_adapter().get_requests_session() as sess:
+            response = sess.get(self.profile_url, params={"access_token": token.token})
+            data = _check_errors(response)
+        return self.get_provider().sociallogin_from_response(request, data)
 
 
 oauth2_login = OAuth2LoginView.adapter_view(GitLabOAuth2Adapter)

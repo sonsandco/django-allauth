@@ -1,9 +1,9 @@
+from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.db.models import Count
 
 from allauth.account.models import EmailAddress
 from allauth.account.utils import user_email
-from allauth.utils import get_user_model
 
 
 class Command(BaseCommand):
@@ -30,15 +30,12 @@ class Command(BaseCommand):
                 break
         else:
             # Didn't find the main email addresses and break the for loop
+            addresses = ", ".join(
+                [email_address.email for email_address in primary_email_addresses]
+            )
             print(
-                "WARNING: Multiple primary without a user.email match for"
-                "user pk %s; (tried: %s, using: %s)"
-            ) % (
-                user.pk,
-                ", ".join(
-                    [email_address.email for email_address in primary_email_addresses]
-                ),
-                primary_email_address,
+                f"WARNING: Multiple primary without a user.email match for user pk {user.pk}; "
+                f"(tried: {addresses}, using: {primary_email_address})"
             )
 
         primary_email_addresses.exclude(pk=primary_email_address.pk).update(

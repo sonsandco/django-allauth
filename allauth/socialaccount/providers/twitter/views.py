@@ -1,5 +1,3 @@
-import json
-
 from allauth.socialaccount.app_settings import QUERY_EMAIL
 from allauth.socialaccount.providers.oauth.client import OAuth
 from allauth.socialaccount.providers.oauth.views import (
@@ -8,29 +6,27 @@ from allauth.socialaccount.providers.oauth.views import (
     OAuthLoginView,
 )
 
-from .provider import TwitterProvider
-
 
 class TwitterAPI(OAuth):
     """
     Verifying twitter credentials
     """
 
-    _base_url = "https://api.twitter.com/1.1/account/verify_credentials.json"
-    url = _base_url + "?include_email=true" if QUERY_EMAIL else _base_url
+    _base_url = "https://api.x.com/1.1/account/verify_credentials.json"
+    url = f"{_base_url}?include_email=true" if QUERY_EMAIL else _base_url
 
     def get_user_info(self):
-        user = json.loads(self.query(self.url))
+        user = self.query(self.url).json()
         return user
 
 
 class TwitterOAuthAdapter(OAuthAdapter):
-    provider_id = TwitterProvider.id
-    request_token_url = "https://api.twitter.com/oauth/request_token"
-    access_token_url = "https://api.twitter.com/oauth/access_token"
+    provider_id = "twitter"
+    request_token_url = "https://api.x.com/oauth/request_token"  # nosec
+    access_token_url = "https://api.x.com/oauth/access_token"  # nosec
     # Issue #42 -- this one authenticates over and over again...
     # authorize_url = 'https://api.twitter.com/oauth/authorize'
-    authorize_url = "https://api.twitter.com/oauth/authenticate"
+    authorize_url = "https://api.x.com/oauth/authenticate"
 
     def complete_login(self, request, app, token, response):
         client = TwitterAPI(request, app.client_id, app.secret, self.request_token_url)

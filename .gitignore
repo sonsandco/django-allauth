@@ -8,7 +8,7 @@ docs/_build
 build
 dist
 *.egg*
-example/local_settings.py
+examples/**/local_settings.py
 node_modules/
 
 # Unit test / coverage reports
@@ -17,6 +17,8 @@ htmlcov/
 .coverage
 .coverage.*
 coverage.xml
+.mypy_cache/
+.nox/
 
 .ropeproject/*
 pep8.txt
@@ -31,3 +33,15 @@ virtualenv
 *.prefs
 *.mo
 /.stfolder
+.direnv/
+examples/react-spa/docker-compose.override.yml
+
+# Devenv
+.devenv*
+devenv.local.nix
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml

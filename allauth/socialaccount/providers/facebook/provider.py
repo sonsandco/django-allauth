@@ -1,66 +1,58 @@
-import json
+import requests
 import string
 from urllib.parse import quote
 
-from django.conf import settings
-from django.core.exceptions import ImproperlyConfigured
+from django.contrib.auth import REDIRECT_FIELD_NAME
 from django.middleware.csrf import get_token
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils.crypto import get_random_string
-from django.utils.html import escapejs, mark_safe
+from django.utils.html import escapejs
 
 from allauth.account.models import EmailAddress
+from allauth.socialaccount.adapter import get_adapter
 from allauth.socialaccount.app_settings import QUERY_EMAIL
 from allauth.socialaccount.providers.base import (
     AuthAction,
     AuthProcess,
     ProviderAccount,
 )
+from allauth.socialaccount.providers.facebook.constants import (
+    GRAPH_API_VERSION,
+    NONCE_LENGTH,
+    NONCE_SESSION_KEY,
+    PROVIDER_ID,
+)
+from allauth.socialaccount.providers.facebook.views import FacebookOAuth2Adapter
+from allauth.socialaccount.providers.oauth2.client import OAuth2Error
 from allauth.socialaccount.providers.oauth2.provider import OAuth2Provider
 from allauth.utils import import_callable
 
 from .locale import get_default_locale_callable
 
 
-GRAPH_API_VERSION = (
-    getattr(settings, "SOCIALACCOUNT_PROVIDERS", {})
-    .get("facebook", {})
-    .get("VERSION", "v7.0")
-)
-GRAPH_API_URL = "https://graph.facebook.com/" + GRAPH_API_VERSION
-
-NONCE_SESSION_KEY = "allauth_facebook_nonce"
-NONCE_LENGTH = 32
-
-
 class FacebookAccount(ProviderAccount):
     def get_profile_url(self):
         return self.account.extra_data.get("link")
 
-    def get_avatar_url(self):
-        uid = self.account.uid
-        # ask for a 600x600 pixel image. We might get smaller but
-        # image will always be highest res possible and square
-        return (
-            GRAPH_API_URL
-            + "/%s/picture?type=square&height=600&width=600&return_ssl_resources=1"
-            % uid
-        )  # noqa
-
-    def to_str(self):
-        dflt = super(FacebookAccount, self).to_str()
-        return self.account.extra_data.get("name", dflt)
-
 
 class FacebookProvider(OAuth2Provider):
-    id = "facebook"
+    id = PROVIDER_ID
     name = "Facebook"
     account_class = FacebookAccount
+    oauth2_adapter_class = FacebookOAuth2Adapter
+    supports_token_authentication = True
 
-    def __init__(self, request):
+    # TODO: populate these from https://www.facebook.com/.well-known/openid-configuration/
+    #  just like in a normal OIDC provider (as that's what "Limited Login" really is)
+    limited_login_expected_jwt_issuer = "https://www.facebook.com"
+    limited_login_jwks_url = (
+        "https://limited.facebook.com/.well-known/oauth/openid/jwks/"
+    )
+
+    def __init__(self, *args, **kwargs):
         self._locale_callable_cache = None
-        super(FacebookProvider, self).__init__(request)
+        super().__init__(*args, **kwargs)
 
     def get_method(self):
         return self.get_settings().get("METHOD", "oauth2")
@@ -68,21 +60,16 @@ class FacebookProvider(OAuth2Provider):
     def get_login_url(self, request, **kwargs):
         method = kwargs.pop("method", self.get_method())
         if method == "js_sdk":
-            next = "'%s'" % escapejs(kwargs.get("next") or "")
-            process = "'%s'" % escapejs(kwargs.get("process") or AuthProcess.LOGIN)
-            action = "'%s'" % escapejs(kwargs.get("action") or AuthAction.AUTHENTICATE)
-            scope = "'%s'" % escapejs(kwargs.get("scope", ""))
-            js = "allauth.facebook.login(%s, %s, %s, %s)" % (
-                next,
-                action,
-                process,
-                scope,
-            )
-            ret = "javascript:%s" % (quote(js),)
+            next = f"'{escapejs(kwargs.get(REDIRECT_FIELD_NAME) or '')}'"
+            process = f"'{escapejs(kwargs.get('process') or AuthProcess.LOGIN)}'"
+            action = f"'{escapejs(kwargs.get('action') or AuthAction.AUTHENTICATE)}'"
+            scope = f"'{escapejs(kwargs.get('scope', ''))}'"
+            js = f"allauth.facebook.login({next}, {action}, {process}, {scope})"
+            ret = f"javascript:{quote(js)}"
         elif method == "oauth2":
-            ret = super(FacebookProvider, self).get_login_url(request, **kwargs)
+            ret = super().get_login_url(request, **kwargs)
         else:
-            raise RuntimeError("Invalid method specified: %s" % method)
+            raise RuntimeError(f"Invalid method specified: {method}")
         return ret
 
     def _get_locale_callable(self):
@@ -118,8 +105,8 @@ class FacebookProvider(OAuth2Provider):
         ]
         return settings.get("FIELDS", default_fields)
 
-    def get_auth_params(self, request, action):
-        ret = super(FacebookProvider, self).get_auth_params(request, action)
+    def get_auth_params_from_request(self, request, action):
+        ret = super().get_auth_params_from_request(request, action)
         if action == AuthAction.REAUTHENTICATE:
             ret["auth_type"] = "reauthenticate"
         elif action == AuthAction.REREQUEST:
@@ -133,8 +120,8 @@ class FacebookProvider(OAuth2Provider):
         return init_params
 
     def get_fb_login_options(self, request):
-        ret = self.get_auth_params(request, "authenticate")
-        ret["scope"] = ",".join(self.get_scope(request))
+        ret = self.get_auth_params_from_request(request, "authenticate")
+        ret["scope"] = ",".join(self.get_scope_from_request(request))
         if ret.get("auth_type") == "reauthenticate":
             ret["auth_nonce"] = self.get_nonce(request, or_create=True)
         return ret
@@ -151,26 +138,17 @@ class FacebookProvider(OAuth2Provider):
         return sdk_url
 
     def media_js(self, request):
-        # NOTE: Avoid loading models at top due to registry boot...
-        from allauth.socialaccount.models import SocialApp
-
-        try:
-            app = self.get_app(request)
-        except SocialApp.DoesNotExist:
-            raise ImproperlyConfigured(
-                "No Facebook app configured: please"
-                " add a SocialApp using the Django"
-                " admin"
-            )
+        if self.get_method() != "js_sdk":
+            return ""
 
         def abs_uri(name):
             return request.build_absolute_uri(reverse(name))
 
         fb_data = {
-            "appId": app.client_id,
+            "appId": self.app.client_id,
             "version": GRAPH_API_VERSION,
             "sdkUrl": self.get_sdk_url(request),
-            "initParams": self.get_init_params(request, app),
+            "initParams": self.get_init_params(request, self.app),
             "loginOptions": self.get_fb_login_options(request),
             "loginByTokenUrl": abs_uri("facebook_login_by_token"),
             "cancelUrl": abs_uri("socialaccount_login_cancelled"),
@@ -181,7 +159,7 @@ class FacebookProvider(OAuth2Provider):
             "errorUrl": abs_uri("socialaccount_login_error"),
             "csrfToken": get_token(request),
         }
-        ctx = {"fb_data": mark_safe(json.dumps(fb_data))}
+        ctx = {"fb_data": fb_data}
         return render_to_string("facebook/fbconnect.html", ctx, request=request)
 
     def get_nonce(self, request, or_create=False, pop=False):
@@ -214,6 +192,31 @@ class FacebookProvider(OAuth2Provider):
             # verified.
             ret.append(EmailAddress(email=email, verified=False, primary=True))
         return ret
+
+    def verify_token(self, request, token: dict):
+        """
+        Verifies both normal oAuth2-style "access_token"s as well
+        as OIDC-style "Limited Login" JWTs.
+
+        Limited Login is an OIDC-based form of Facebook Login
+        that their iOS SDK uses when App Tracking Transparency consent is denied.
+        """
+        from allauth.socialaccount.providers.facebook import flows
+
+        access_token = token.get("access_token")
+        id_token = token.get("id_token")
+
+        if not any([access_token, id_token]):
+            raise get_adapter().validation_error("invalid_token")
+
+        try:
+            if access_token:
+                return flows.verify_token(request, self, access_token)
+            else:
+                assert id_token  # nosec
+                return flows.verify_limited_login_token(request, self, id_token)
+        except (OAuth2Error, requests.RequestException) as e:
+            raise get_adapter().validation_error("invalid_token") from e
 
 
 provider_classes = [FacebookProvider]

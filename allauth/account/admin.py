@@ -1,8 +1,9 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.utils.translation import gettext_lazy as _
 
-from . import app_settings
-from .adapter import get_adapter
-from .models import EmailAddress, EmailConfirmation
+from allauth.account import app_settings, signals
+from allauth.account.adapter import get_adapter
+from allauth.account.models import EmailAddress, EmailConfirmation
 
 
 class EmailAddressAdmin(admin.ModelAdmin):
@@ -13,13 +14,32 @@ class EmailAddressAdmin(admin.ModelAdmin):
     actions = ["make_verified"]
 
     def get_search_fields(self, request):
-        base_fields = get_adapter(request).get_user_search_fields()
-        return ["email"] + list(map(lambda a: "user__" + a, base_fields))
+        base_fields = get_adapter().get_user_search_fields()
+        return ["email"] + list(map(lambda a: f"user__{a}", base_fields))
 
     def make_verified(self, request, queryset):
-        queryset.update(verified=True)
+        for email_address in queryset.filter(verified=False).iterator():
+            if email_address.set_verified():
+                signals.email_confirmed.send(
+                    sender=EmailAddress,
+                    request=request,
+                    email_address=email_address,
+                )
+                self.message_user(
+                    request,
+                    _("Marked {email} as verified.").format(email=email_address.email),
+                    level=messages.SUCCESS,
+                )
+            else:
+                self.message_user(
+                    request,
+                    _("Failed to mark {email} as verified.").format(
+                        email=email_address.email
+                    ),
+                    level=messages.ERROR,
+                )
 
-    make_verified.short_description = "Mark selected email addresses as verified"
+    make_verified.short_description = _("Mark selected email addresses as verified")  # type: ignore[attr-defined]
 
 
 class EmailConfirmationAdmin(admin.ModelAdmin):

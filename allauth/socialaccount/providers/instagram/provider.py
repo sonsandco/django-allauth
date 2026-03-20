@@ -1,29 +1,27 @@
 from allauth.socialaccount.providers.base import ProviderAccount
+from allauth.socialaccount.providers.instagram.views import InstagramOAuth2Adapter
 from allauth.socialaccount.providers.oauth2.provider import OAuth2Provider
 
 
 class InstagramAccount(ProviderAccount):
-
-    PROFILE_URL = "http://instagram.com/"
+    PROFILE_URL = "https://instagram.com/"
 
     def get_profile_url(self):
-        return self.PROFILE_URL + self.account.extra_data.get("username")
-
-    def to_str(self):
-        dflt = super(InstagramAccount, self).to_str()
-        return self.account.extra_data.get("username", dflt)
+        username = self.account.extra_data.get("username")
+        return f"{self.PROFILE_URL}{username}"
 
 
 class InstagramProvider(OAuth2Provider):
     id = "instagram"
     name = "Instagram"
     account_class = InstagramAccount
+    oauth2_adapter_class = InstagramOAuth2Adapter
 
     def extract_extra_data(self, data):
         return data
 
     def get_default_scope(self):
-        return ["basic"]
+        return ["user_profile"]
 
     def extract_uid(self, data):
         return str(data["id"])

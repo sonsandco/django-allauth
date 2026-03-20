@@ -1,28 +1,24 @@
-import requests
-
+from allauth.socialaccount.adapter import get_adapter
 from allauth.socialaccount.providers.oauth2.views import (
     OAuth2Adapter,
     OAuth2CallbackView,
     OAuth2LoginView,
 )
 
-from .provider import DropboxOAuth2Provider
-
 
 class DropboxOAuth2Adapter(OAuth2Adapter):
-    provider_id = DropboxOAuth2Provider.id
-    access_token_url = "https://api.dropbox.com/oauth2/token"
+    provider_id = "dropbox"
+    access_token_url = "https://api.dropbox.com/oauth2/token"  # nosec
     authorize_url = "https://www.dropbox.com/oauth2/authorize"
     profile_url = "https://api.dropbox.com/2/users/get_current_account"
-    redirect_uri_protocol = "https"
 
     def complete_login(self, request, app, token, **kwargs):
-        response = requests.post(
-            self.profile_url,
-            headers={"Authorization": "Bearer %s" % (token.token,)},
-        )
-        response.raise_for_status()
-        return self.get_provider().sociallogin_from_response(request, response.json())
+        headers = {"Authorization": f"Bearer {token.token}"}
+        with get_adapter().get_requests_session() as sess:
+            response = sess.post(self.profile_url, headers=headers)
+            response.raise_for_status()
+            extra_data = response.json()
+        return self.get_provider().sociallogin_from_response(request, extra_data)
 
 
 oauth_login = OAuth2LoginView.adapter_view(DropboxOAuth2Adapter)

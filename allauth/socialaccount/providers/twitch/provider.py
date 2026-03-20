@@ -1,10 +1,11 @@
 from allauth.socialaccount.providers.base import ProviderAccount
 from allauth.socialaccount.providers.oauth2.provider import OAuth2Provider
+from allauth.socialaccount.providers.twitch.views import TwitchOAuth2Adapter
 
 
 class TwitchAccount(ProviderAccount):
     def get_profile_url(self):
-        return "http://twitch.tv/" + self.account.extra_data.get("login")
+        return f"https://twitch.tv/{self.account.extra_data.get('login')}"
 
     def get_avatar_url(self):
         # We're using `logo` as a failback for legacy profiles retrieved
@@ -13,7 +14,7 @@ class TwitchAccount(ProviderAccount):
         return self.account.extra_data.get("profile_image_url", logo)
 
     def to_str(self):
-        dflt = super(TwitchAccount, self).to_str()
+        dflt = super().to_str()
         return self.account.extra_data.get("login", dflt)
 
 
@@ -21,6 +22,7 @@ class TwitchProvider(OAuth2Provider):
     id = "twitch"
     name = "Twitch"
     account_class = TwitchAccount
+    oauth2_adapter_class = TwitchOAuth2Adapter
 
     def extract_uid(self, data):
         return str(data["id"])

@@ -1,8 +1,5 @@
-# -*- coding: utf-8 -*-
-import requests
-
 from allauth.socialaccount import app_settings
-from allauth.socialaccount.providers.auth0.provider import Auth0Provider
+from allauth.socialaccount.adapter import get_adapter
 from allauth.socialaccount.providers.oauth2.views import (
     OAuth2Adapter,
     OAuth2CallbackView,
@@ -11,27 +8,19 @@ from allauth.socialaccount.providers.oauth2.views import (
 
 
 class Auth0OAuth2Adapter(OAuth2Adapter):
-    provider_id = Auth0Provider.id
-    supports_state = True
+    provider_id = "auth0"
 
     settings = app_settings.PROVIDERS.get(provider_id, {})
     provider_base_url = settings.get("AUTH0_URL")
 
-    access_token_url = "{0}/oauth/token".format(provider_base_url)
-    authorize_url = "{0}/authorize".format(provider_base_url)
-    profile_url = "{0}/userinfo".format(provider_base_url)
+    access_token_url = f"{provider_base_url}/oauth/token"
+    authorize_url = f"{provider_base_url}/authorize"
+    profile_url = f"{provider_base_url}/userinfo"
 
     def complete_login(self, request, app, token, response):
-        extra_data = requests.get(
-            self.profile_url, params={"access_token": token.token}
-        ).json()
-        extra_data = {
-            "user_id": extra_data["sub"],
-            "id": extra_data["sub"],
-            "name": extra_data["name"],
-            "email": extra_data["email"],
-        }
-
+        with get_adapter().get_requests_session() as sess:
+            resp = sess.get(self.profile_url, params={"access_token": token.token})
+            extra_data = resp.json()
         return self.get_provider().sociallogin_from_response(request, extra_data)
 
 

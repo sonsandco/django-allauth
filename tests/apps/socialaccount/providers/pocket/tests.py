@@ -1,0 +1,51 @@
+from http import HTTPStatus
+from urllib.parse import parse_qs, urlencode, urlparse
+
+from django.test import TestCase
+from django.urls import reverse
+
+from allauth.socialaccount.providers.pocket.provider import PocketProvider
+from tests.apps.socialaccount.base import OAuthTestsMixin
+from tests.mocking import MockedResponse, mocked_response
+
+
+class PocketOAuthTests(OAuthTestsMixin, TestCase):
+    provider_id = PocketProvider.id
+
+    def get_mocked_response(self):
+        return []
+
+    def get_expected_to_str(self):
+        return "name@example.com"
+
+    def get_access_token_response(self):
+        return MockedResponse(
+            HTTPStatus.OK,
+            """
+        {"access_token":"5678defg-5678-defg-5678-defg56",
+        "username":"name@example.com"}
+        """,
+        )
+
+    def login(self, resp_mocks, process="login"):
+        with mocked_response(
+            MockedResponse(
+                HTTPStatus.OK,
+                """
+                {"code": "dcba4321-dcba-4321-dcba-4321dc"}
+                """,
+                {"content-type": "application/json"},
+            )
+        ):
+            resp = self.client.post(
+                reverse(f"{self.provider.id}_login")
+                + "?"
+                + urlencode(dict(process=process))
+            )
+        p = urlparse(resp["location"])
+        q = parse_qs(p.query)
+        complete_url = reverse(f"{self.provider.id}_callback")
+        self.assertGreater(q["redirect_uri"][0].find(complete_url), 0)
+        with mocked_response(self.get_access_token_response(), *resp_mocks):
+            resp = self.client.get(complete_url)
+        return resp

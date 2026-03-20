@@ -1,7 +1,7 @@
-import requests
+from http import HTTPStatus
 
 from allauth.socialaccount import app_settings
-from allauth.socialaccount.providers.github.provider import GitHubProvider
+from allauth.socialaccount.adapter import get_adapter
 from allauth.socialaccount.providers.oauth2.views import (
     OAuth2Adapter,
     OAuth2CallbackView,
@@ -10,45 +10,40 @@ from allauth.socialaccount.providers.oauth2.views import (
 
 
 class GitHubOAuth2Adapter(OAuth2Adapter):
-    provider_id = GitHubProvider.id
+    provider_id = "github"
     settings = app_settings.PROVIDERS.get(provider_id, {})
 
     if "GITHUB_URL" in settings:
         web_url = settings.get("GITHUB_URL").rstrip("/")
-        api_url = "{0}/api/v3".format(web_url)
+        api_url = f"{web_url}/api/v3"
     else:
         web_url = "https://github.com"
         api_url = "https://api.github.com"
 
-    access_token_url = "{0}/login/oauth/access_token".format(web_url)
-    authorize_url = "{0}/login/oauth/authorize".format(web_url)
-    profile_url = "{0}/user".format(api_url)
-    emails_url = "{0}/user/emails".format(api_url)
+    access_token_url = f"{web_url}/login/oauth/access_token"
+    authorize_url = f"{web_url}/login/oauth/authorize"
+    profile_url = f"{api_url}/user"
+    emails_url = f"{api_url}/user/emails"
 
     def complete_login(self, request, app, token, **kwargs):
-        headers = {"Authorization": "token {}".format(token.token)}
-        resp = requests.get(self.profile_url, headers=headers)
-        resp.raise_for_status()
-        extra_data = resp.json()
-        if app_settings.QUERY_EMAIL and not extra_data.get("email"):
-            extra_data["email"] = self.get_email(headers)
+        headers = {"Authorization": f"token {token.token}"}
+        with get_adapter().get_requests_session() as sess:
+            resp = sess.get(self.profile_url, headers=headers)
+            resp.raise_for_status()
+            extra_data = resp.json()
+        if app_settings.QUERY_EMAIL:
+            if emails := self.get_emails(headers):
+                extra_data["emails"] = emails
         return self.get_provider().sociallogin_from_response(request, extra_data)
 
-    def get_email(self, headers):
-        email = None
-        resp = requests.get(self.emails_url, headers=headers)
-        resp.raise_for_status()
-        emails = resp.json()
-        if resp.status_code == 200 and emails:
-            email = emails[0]
-            primary_emails = [
-                e for e in emails if not isinstance(e, dict) or e.get("primary")
-            ]
-            if primary_emails:
-                email = primary_emails[0]
-            if isinstance(email, dict):
-                email = email.get("email", "")
-        return email
+    def get_emails(self, headers) -> list | None:
+        with get_adapter().get_requests_session() as sess:
+            resp = sess.get(self.emails_url, headers=headers)
+            # https://api.github.com/user/emails -- 404 is documented to occur.
+            if resp.status_code == HTTPStatus.NOT_FOUND:
+                return None
+            resp.raise_for_status()
+            return resp.json()
 
 
 oauth2_login = OAuth2LoginView.adapter_view(GitHubOAuth2Adapter)

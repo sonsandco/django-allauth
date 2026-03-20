@@ -1,5 +1,4 @@
-import requests
-
+from allauth.socialaccount.adapter import get_adapter
 from allauth.socialaccount.providers.base import ProviderException
 from allauth.socialaccount.providers.oauth2.views import (
     OAuth2Adapter,
@@ -7,12 +6,10 @@ from allauth.socialaccount.providers.oauth2.views import (
     OAuth2LoginView,
 )
 
-from .provider import DataportenProvider
 
-
-class DataportenAdapter(OAuth2Adapter):
-    provider_id = DataportenProvider.id
-    access_token_url = "https://auth.dataporten.no/oauth/token"
+class DataportenOAuth2Adapter(OAuth2Adapter):
+    provider_id = "dataporten"
+    access_token_url = "https://auth.dataporten.no/oauth/token"  # nosec
     authorize_url = "https://auth.dataporten.no/oauth/authorization"
     profile_url = "https://auth.dataporten.no/userinfo"
     groups_url = "https://groups-api.dataporten.no/groups/"
@@ -29,36 +26,29 @@ class DataportenAdapter(OAuth2Adapter):
             by the methods of the DataportenProvider view, i.e.
             extract_uid(), extract_extra_data(), and extract_common_fields()
         """
-        # The athentication header
-        headers = {"Authorization": "Bearer " + token.token}
+        # The authentication header
+        headers = {"Authorization": f"Bearer {token.token}"}
 
         # Userinfo endpoint, for documentation see:
         # https://docs.dataporten.no/docs/oauth-authentication/
-        userinfo_response = requests.get(
-            self.profile_url,
-            headers=headers,
-        )
-        # Raise exception for 4xx and 5xx response codes
-        userinfo_response.raise_for_status()
-
-        # The endpoint returns json-data and it needs to be decoded
-        extra_data = userinfo_response.json()["user"]
+        with get_adapter().get_requests_session() as sess:
+            resp = sess.get(self.profile_url, headers=headers)
+            resp.raise_for_status()
+            response_json = resp.json()
+            extra_data = response_json["user"]
 
         # Finally test that the audience property matches the client id
         # for validification reasons, as instructed by the Dataporten docs
         # if the userinfo-response is used for authentication
-        if userinfo_response.json()["audience"] != app.client_id:
+        if response_json["audience"] != app.client_id:
             raise ProviderException(
                 "Dataporten returned a user with an audience field \
                  which does not correspond to the client id of the \
                  application."
             )
 
-        return self.get_provider().sociallogin_from_response(
-            request,
-            extra_data,
-        )
+        return self.get_provider().sociallogin_from_response(request, extra_data)
 
 
-oauth2_login = OAuth2LoginView.adapter_view(DataportenAdapter)
-oauth2_callback = OAuth2CallbackView.adapter_view(DataportenAdapter)
+oauth2_login = OAuth2LoginView.adapter_view(DataportenOAuth2Adapter)
+oauth2_callback = OAuth2CallbackView.adapter_view(DataportenOAuth2Adapter)

@@ -1,9 +1,6 @@
-import requests
-
 from allauth.socialaccount import app_settings
-from allauth.socialaccount.providers.amazon_cognito.provider import (
-    AmazonCognitoProvider,
-)
+from allauth.socialaccount.adapter import get_adapter
+from allauth.socialaccount.models import SocialToken
 from allauth.socialaccount.providers.oauth2.views import (
     OAuth2Adapter,
     OAuth2CallbackView,
@@ -12,7 +9,7 @@ from allauth.socialaccount.providers.oauth2.views import (
 
 
 class AmazonCognitoOAuth2Adapter(OAuth2Adapter):
-    provider_id = AmazonCognitoProvider.id
+    provider_id = "amazon_cognito"
 
     DOMAIN_KEY_MISSING_ERROR = (
         '"DOMAIN" key is missing in Amazon Cognito configuration.'
@@ -33,24 +30,25 @@ class AmazonCognitoOAuth2Adapter(OAuth2Adapter):
 
     @property
     def access_token_url(self):
-        return "{}/oauth2/token".format(self.domain)
+        return f"{self.domain}/oauth2/token"
 
     @property
     def authorize_url(self):
-        return "{}/oauth2/authorize".format(self.domain)
+        return f"{self.domain}/oauth2/authorize"
 
     @property
     def profile_url(self):
-        return "{}/oauth2/userInfo".format(self.domain)
+        return f"{self.domain}/oauth2/userInfo"
 
-    def complete_login(self, request, app, access_token, **kwargs):
+    def complete_login(self, request, app, token: SocialToken, **kwargs):
         headers = {
-            "Authorization": "Bearer {}".format(access_token),
+            "Authorization": f"Bearer {token.token}",
         }
-        extra_data = requests.get(self.profile_url, headers=headers)
-        extra_data.raise_for_status()
-
-        return self.get_provider().sociallogin_from_response(request, extra_data.json())
+        with get_adapter().get_requests_session() as sess:
+            response = sess.get(self.profile_url, headers=headers)
+            response.raise_for_status()
+            extra_data = response.json()
+        return self.get_provider().sociallogin_from_response(request, extra_data)
 
 
 oauth2_login = OAuth2LoginView.adapter_view(AmazonCognitoOAuth2Adapter)

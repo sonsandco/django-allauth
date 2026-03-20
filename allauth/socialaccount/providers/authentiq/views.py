@@ -1,18 +1,16 @@
-import requests
 from urllib.parse import urljoin
 
 from allauth.socialaccount import app_settings
+from allauth.socialaccount.adapter import get_adapter
 from allauth.socialaccount.providers.oauth2.views import (
     OAuth2Adapter,
     OAuth2CallbackView,
     OAuth2LoginView,
 )
 
-from .provider import AuthentiqProvider
-
 
 class AuthentiqOAuth2Adapter(OAuth2Adapter):
-    provider_id = AuthentiqProvider.id
+    provider_id = "authentiq"
 
     settings = app_settings.PROVIDERS.get(provider_id, {})
 
@@ -25,12 +23,12 @@ class AuthentiqOAuth2Adapter(OAuth2Adapter):
     profile_url = urljoin(provider_url, "userinfo")
 
     def complete_login(self, request, app, token, **kwargs):
-        auth = {"Authorization": "Bearer " + token.token}
-        resp = requests.get(self.profile_url, headers=auth)
-        resp.raise_for_status()
-        extra_data = resp.json()
-        login = self.get_provider().sociallogin_from_response(request, extra_data)
-        return login
+        auth = {"Authorization": f"Bearer {token.token}"}
+        with get_adapter().get_requests_session() as sess:
+            resp = sess.get(self.profile_url, headers=auth)
+            resp.raise_for_status()
+            extra_data = resp.json()
+        return self.get_provider().sociallogin_from_response(request, extra_data)
 
 
 oauth2_login = OAuth2LoginView.adapter_view(AuthentiqOAuth2Adapter)

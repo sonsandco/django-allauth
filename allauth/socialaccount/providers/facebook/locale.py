@@ -13,9 +13,10 @@ def _build_locale_table(filename_or_file):
     for that language ('en' -> 'US', 'EN') and an (arbitrary) default region.
     """
     # Require the XML parser module only if we want the default mapping
-    from xml.dom.minidom import parse
+    from xml.dom.minidom import parse  # nosec
 
-    dom = parse(filename_or_file)
+    # Trusted source
+    dom = parse(filename_or_file)  # nosec
 
     reps = dom.getElementsByTagName("representation")
     locs = map(lambda r: r.childNodes[0].data, reps)
@@ -51,7 +52,7 @@ def get_default_locale_callable():
         Guess an appropriate FB locale based on the active Django locale.
         If the active locale is available, it is returned. Otherwise,
         it tries to return another locale with the same language. If there
-        isn't one avaible, 'en_US' is returned.
+        isn't one available, 'en_US' is returned.
         """
         chosen = "en_US"
         language = get_language()
@@ -62,9 +63,9 @@ def get_default_locale_callable():
             lang_map = fb_locales.get(lang)
             if lang_map is not None:
                 if reg in lang_map["regs"]:
-                    chosen = lang + "_" + reg
+                    chosen = f"{lang}_{reg}"
                 else:
-                    chosen = lang + "_" + lang_map["default"]
+                    chosen = f"{lang}_{lang_map['default']}"
         return chosen
 
     return default_locale

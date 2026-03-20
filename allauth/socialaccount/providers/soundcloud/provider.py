@@ -1,5 +1,6 @@
 from allauth.socialaccount.providers.base import ProviderAccount
 from allauth.socialaccount.providers.oauth2.provider import OAuth2Provider
+from allauth.socialaccount.providers.soundcloud.views import SoundCloudOAuth2Adapter
 
 
 class SoundCloudAccount(ProviderAccount):
@@ -9,20 +10,15 @@ class SoundCloudAccount(ProviderAccount):
     def get_avatar_url(self):
         return self.account.extra_data.get("avatar_url")
 
-    def to_str(self):
-        dflt = super(SoundCloudAccount, self).to_str()
-        full_name = self.account.extra_data.get("full_name")
-        username = self.account.extra_data.get("username")
-        return full_name or username or dflt
-
 
 class SoundCloudProvider(OAuth2Provider):
     id = "soundcloud"
     name = "SoundCloud"
     account_class = SoundCloudAccount
+    oauth2_adapter_class = SoundCloudOAuth2Adapter
 
     def extract_uid(self, data):
-        return str(data["id"])
+        return str(data["urn"])
 
     def extract_common_fields(self, data):
         return dict(

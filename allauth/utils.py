@@ -1,6 +1,4 @@
-import base64
 import importlib
-import json
 import random
 import re
 import string
@@ -8,22 +6,14 @@ import unicodedata
 from collections import OrderedDict
 from urllib.parse import urlsplit
 
-import django
+from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.contrib.sites.models import Site
-from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.core.serializers.json import DjangoJSONEncoder
-from django.core.validators import ValidationError, validate_email
-from django.db.models import FileField
-from django.db.models.fields import (
-    BinaryField,
-    DateField,
-    DateTimeField,
-    EmailField,
-    TimeField,
-)
-from django.utils import dateparse
-from django.utils.encoding import force_bytes, force_str
+from django.core.exceptions import ImproperlyConfigured, ValidationError
+from django.http import HttpRequest
+from django.utils.encoding import force_str
+
+from allauth import app_settings
+from allauth.core import context
 
 
 # Magic number 7: if you run into collisions with this number, then you are
@@ -45,11 +35,13 @@ def _generate_unique_username_base(txts, regex=None):
             continue
         username = unicodedata.normalize("NFKD", force_str(txt))
         username = username.encode("ascii", "ignore").decode("ascii")
+        if len(username) == 0:
+            continue
         username = force_str(re.sub(regex, "", username).lower())
-        # Django allows for '@' in usernames in order to accomodate for
-        # project wanting to use e-mail for username. In allauth we don't
-        # use this, we already have a proper place for putting e-mail
-        # addresses (EmailAddress), so let's not use the full e-mail
+        # Django allows for '@' in usernames in order to accommodate for
+        # project wanting to use email for username. In allauth we don't
+        # use this, we already have a proper place for putting email
+        # addresses (EmailAddress), so let's not use the full email
         # address and only take the part leading up to the '@'.
         username = username.split("@")[0]
         username = username.strip()
@@ -77,7 +69,7 @@ def get_username_max_length():
 def generate_username_candidate(basename, suffix_length):
     max_length = get_username_max_length()
     suffix = "".join(
-        random.choice(USERNAME_SUFFIX_CHARS[i]) for i in range(suffix_length)
+        random.choice(USERNAME_SUFFIX_CHARS[i]) for i in range(suffix_length)  # nosec
     )
     return basename[0 : max_length - len(suffix)] + suffix
 
@@ -108,7 +100,7 @@ def generate_unique_username(txts, regex=None):
     existing_usernames = filter_users_by_username(*candidates).values_list(
         USER_MODEL_USERNAME_FIELD, flat=True
     )
-    existing_usernames = set([n.lower() for n in existing_usernames])
+    existing_usernames = {n.lower() for n in existing_usernames}
     for candidate in candidates:
         if candidate.lower() not in existing_usernames:
             try:
@@ -119,122 +111,18 @@ def generate_unique_username(txts, regex=None):
     raise NotImplementedError("Unable to find a unique username")
 
 
-def valid_email_or_none(email):
-    ret = None
-    try:
-        if email:
-            validate_email(email)
-            if len(email) <= EmailField().max_length:
-                ret = email
-    except ValidationError:
-        pass
-    return ret
-
-
-def email_address_exists(email, exclude_user=None):
-    from .account import app_settings as account_settings
-    from .account.models import EmailAddress
-
-    emailaddresses = EmailAddress.objects
-    if exclude_user:
-        emailaddresses = emailaddresses.exclude(user=exclude_user)
-    ret = emailaddresses.filter(email__iexact=email).exists()
-    if not ret:
-        email_field = account_settings.USER_MODEL_EMAIL_FIELD
-        if email_field:
-            users = get_user_model().objects
-            if exclude_user:
-                users = users.exclude(pk=exclude_user.pk)
-            ret = users.filter(**{email_field + "__iexact": email}).exists()
-    return ret
-
-
 def import_attribute(path):
-    assert isinstance(path, str)
+    assert isinstance(path, str)  # nosec
     pkg, attr = path.rsplit(".", 1)
     ret = getattr(importlib.import_module(pkg), attr)
     return ret
 
 
 def import_callable(path_or_callable):
-    if not hasattr(path_or_callable, "__call__"):
+    if not callable(path_or_callable):
         ret = import_attribute(path_or_callable)
     else:
         ret = path_or_callable
-    return ret
-
-
-SERIALIZED_DB_FIELD_PREFIX = "_db_"
-
-
-def serialize_instance(instance):
-    """
-    Since Django 1.6 items added to the session are no longer pickled,
-    but JSON encoded by default. We are storing partially complete models
-    in the session (user, account, token, ...). We cannot use standard
-    Django serialization, as these are models are not "complete" yet.
-    Serialization will start complaining about missing relations et al.
-    """
-    data = {}
-    for k, v in instance.__dict__.items():
-        if k.startswith("_") or callable(v):
-            continue
-        try:
-            field = instance._meta.get_field(k)
-            if isinstance(field, BinaryField):
-                v = force_str(base64.b64encode(v))
-            elif isinstance(field, FileField):
-                if v and not isinstance(v, str):
-                    v = v.name
-            # Check if the field is serializable. If not, we'll fall back
-            # to serializing the DB values which should cover most use cases.
-            try:
-                json.dumps(v, cls=DjangoJSONEncoder)
-            except TypeError:
-                v = field.get_prep_value(v)
-                k = SERIALIZED_DB_FIELD_PREFIX + k
-        except FieldDoesNotExist:
-            pass
-        data[k] = v
-    return json.loads(json.dumps(data, cls=DjangoJSONEncoder))
-
-
-def deserialize_instance(model, data):
-    ret = model()
-    for k, v in data.items():
-        is_db_value = False
-        if k.startswith(SERIALIZED_DB_FIELD_PREFIX):
-            k = k[len(SERIALIZED_DB_FIELD_PREFIX) :]
-            is_db_value = True
-        if v is not None:
-            try:
-                f = model._meta.get_field(k)
-                if isinstance(f, DateTimeField):
-                    v = dateparse.parse_datetime(v)
-                elif isinstance(f, TimeField):
-                    v = dateparse.parse_time(v)
-                elif isinstance(f, DateField):
-                    v = dateparse.parse_date(v)
-                elif isinstance(f, BinaryField):
-                    v = force_bytes(base64.b64decode(force_bytes(v)))
-                elif is_db_value:
-                    try:
-                        # This is quite an ugly hack, but will cover most
-                        # use cases...
-                        # The signature of `from_db_value` changed in Django 3
-                        # https://docs.djangoproject.com/en/3.0/releases/3.0/#features-removed-in-3-0
-                        if django.VERSION < (3, 0):
-                            v = f.from_db_value(v, None, None, None)
-                        else:
-                            v = f.from_db_value(v, None, None)
-                    except Exception:
-                        raise ImproperlyConfigured(
-                            "Unable to auto serialize field '{}', custom"
-                            " serialization override required".format(k)
-                        )
-            except FieldDoesNotExist:
-                pass
-        setattr(ret, k, v)
     return ret
 
 
@@ -262,7 +150,9 @@ def set_form_field_order(form, field_order):
     form.fields = fields
 
 
-def build_absolute_uri(request, location, protocol=None):
+def build_absolute_uri(
+    request: HttpRequest | None, location: str, protocol: str | None = None
+) -> str:
     """request.build_absolute_uri() helper
 
     Like request.build_absolute_uri, but gracefully handling
@@ -271,14 +161,19 @@ def build_absolute_uri(request, location, protocol=None):
     from .account import app_settings as account_settings
 
     if request is None:
+        request = context.request
+
+    if request is None:
+        if not app_settings.SITES_ENABLED:
+            raise ImproperlyConfigured(
+                "Passing `request=None` requires `sites` to be enabled."
+            )
+        from django.contrib.sites.models import Site
+
         site = Site.objects.get_current()
         bits = urlsplit(location)
         if not (bits.scheme and bits.netloc):
-            uri = "{proto}://{domain}{url}".format(
-                proto=account_settings.DEFAULT_HTTP_PROTOCOL,
-                domain=site.domain,
-                url=location,
-            )
+            uri = f"{account_settings.DEFAULT_HTTP_PROTOCOL}://{site.domain}{location}"
         else:
             uri = location
     else:
@@ -294,7 +189,7 @@ def build_absolute_uri(request, location, protocol=None):
         protocol = account_settings.DEFAULT_HTTP_PROTOCOL
     # (end NOTE)
     if protocol:
-        uri = protocol + ":" + uri.partition(":")[2]
+        uri = f"{protocol}:{uri.partition(':')[2]}"
     return uri
 
 
@@ -309,3 +204,13 @@ def get_request_param(request, param, default=None):
     if request is None:
         return default
     return request.POST.get(param) or request.GET.get(param, default)
+
+
+def get_setting(name, dflt):
+    getter = getattr(
+        settings,
+        "ALLAUTH_SETTING_GETTER",
+        lambda name, dflt: getattr(settings, name, dflt),
+    )
+    getter = import_callable(getter)
+    return getter(name, dflt)

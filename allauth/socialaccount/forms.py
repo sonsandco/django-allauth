@@ -1,16 +1,15 @@
-from __future__ import absolute_import
-
 from django import forms
 
 from allauth.account.forms import BaseSignupForm
+from allauth.socialaccount.internal import flows
 
-from . import app_settings, signals
+from . import app_settings
 from .adapter import get_adapter
 from .models import SocialAccount
 
 
 class SignupForm(BaseSignupForm):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         self.sociallogin = kwargs.pop("sociallogin")
         initial = get_adapter().get_signup_form_initial_data(self.sociallogin)
         kwargs.update(
@@ -21,21 +20,20 @@ class SignupForm(BaseSignupForm):
                 ),
             }
         )
-        super(SignupForm, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def save(self, request):
-        adapter = get_adapter(request)
+        adapter = get_adapter()
         user = adapter.save_user(request, self.sociallogin, form=self)
         self.custom_signup(request, user)
         return user
 
-    def validate_unique_email(self, value):
+    def validate_unique_email(self, value) -> str:
         try:
-            return super(SignupForm, self).validate_unique_email(value)
+            return super().validate_unique_email(value)
         except forms.ValidationError:
-            raise forms.ValidationError(
-                get_adapter().error_messages["email_taken"]
-                % self.sociallogin.account.get_provider().name
+            raise get_adapter().validation_error(
+                "email_taken", self.sociallogin.provider.name
             )
 
 
@@ -49,19 +47,16 @@ class DisconnectForm(forms.Form):
     def __init__(self, *args, **kwargs):
         self.request = kwargs.pop("request")
         self.accounts = SocialAccount.objects.filter(user=self.request.user)
-        super(DisconnectForm, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.fields["account"].queryset = self.accounts
 
     def clean(self):
-        cleaned_data = super(DisconnectForm, self).clean()
+        cleaned_data = super().clean()
         account = cleaned_data.get("account")
         if account:
-            get_adapter(self.request).validate_disconnect(account, self.accounts)
+            flows.connect.validate_disconnect(self.request, account)
         return cleaned_data
 
-    def save(self):
+    def save(self) -> None:
         account = self.cleaned_data["account"]
-        account.delete()
-        signals.social_account_removed.send(
-            sender=SocialAccount, request=self.request, socialaccount=account
-        )
+        flows.connect.disconnect(self.request, account)

@@ -1,28 +1,24 @@
-import requests
-
+from allauth.socialaccount.adapter import get_adapter
 from allauth.socialaccount.providers.oauth2.views import (
     OAuth2Adapter,
     OAuth2CallbackView,
     OAuth2LoginView,
 )
 
-from .provider import (
-    FXA_OAUTH_ENDPOINT,
-    FXA_PROFILE_ENDPOINT,
-    FirefoxAccountsProvider,
-)
+from .constants import FXA_OAUTH_ENDPOINT, FXA_PROFILE_ENDPOINT, PROVIDER_ID
 
 
 class FirefoxAccountsOAuth2Adapter(OAuth2Adapter):
-    provider_id = FirefoxAccountsProvider.id
-    access_token_url = FXA_OAUTH_ENDPOINT + "/token"
-    authorize_url = FXA_OAUTH_ENDPOINT + "/authorization"
-    profile_url = FXA_PROFILE_ENDPOINT + "/profile"
+    provider_id = PROVIDER_ID
+    access_token_url = f"{FXA_OAUTH_ENDPOINT}/token"
+    authorize_url = f"{FXA_OAUTH_ENDPOINT}/authorization"
+    profile_url = f"{FXA_PROFILE_ENDPOINT}/profile"
 
     def complete_login(self, request, app, token, **kwargs):
-        headers = {"Authorization": "Bearer {0}".format(token.token)}
-        resp = requests.get(self.profile_url, headers=headers)
-        extra_data = resp.json()
+        headers = {"Authorization": f"Bearer {token.token}"}
+        with get_adapter().get_requests_session() as sess:
+            resp = sess.get(self.profile_url, headers=headers)
+            extra_data = resp.json()
         return self.get_provider().sociallogin_from_response(request, extra_data)
 
 

@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - python-version: "3.10"
+            debian-version: trixie
+          - python-version: "3.12"
+            debian-version: trixie
+          - python-version: "3.13"
+            debian-version: trixie
+          - python-version: "3.14"
+            debian-version: trixie
+    container:
+      image: python:${{ matrix.python-version }}-${{ matrix.debian-version }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends gettext make
+      - name: Install nox
+        run: pip install nox
+      - name: Run tests
+        run: nox -x --session "test-${{ matrix.python-version }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docs:
+    runs-on: ubuntu-22.04
+    needs: []
+    strategy:
+      matrix:
+        python-version: [3.14]
+    container:
+      image: python:3.14-trixie
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install nox
+        run: pip install nox
+      - name: Build docs
+        run: nox -x --session "docs"
+
+  lint:
+    runs-on: ubuntu-22.04
+    needs: []
+    strategy:
+      matrix:
+        python-version: [3.14]
+    container:
+      image: python:3.14-trixie
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install nox
+        run: pip install nox
+      - name: Run linter
+        run: nox -x -t lint
+
+  standardjs:
+    runs-on: ubuntu-24.04
+    needs: []
+    strategy:
+      matrix:
+        python-version: [3.14]
+    container:
+      image: node:22-trixie
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install standardjs dependencies
+        run: make ci-install-standardjs
+      - name: Run standardjs
+        run: make standardjs

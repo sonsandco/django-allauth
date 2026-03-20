@@ -12,18 +12,18 @@ Resources:
 * The Battle.net API forum:
     https://us.battle.net/en/forum/15051532/
 """
-import requests
+
+from http import HTTPStatus
 
 from django.conf import settings
 
+from allauth.socialaccount.adapter import get_adapter
 from allauth.socialaccount.providers.oauth2.client import OAuth2Error
 from allauth.socialaccount.providers.oauth2.views import (
     OAuth2Adapter,
     OAuth2CallbackView,
     OAuth2LoginView,
 )
-
-from .provider import BattleNetProvider
 
 
 class Region:
@@ -40,9 +40,9 @@ def _check_errors(response):
     try:
         data = response.json()
     except ValueError:  # JSONDecodeError on py3
-        raise OAuth2Error("Invalid JSON from Battle.net API: %r" % (response.text))
+        raise OAuth2Error(f"Invalid JSON from Battle.net API: {response.text!r}")
 
-    if response.status_code >= 400 or "error" in data:
+    if response.status_code >= HTTPStatus.BAD_REQUEST or "error" in data:
         # For errors, we expect the following format:
         # {"error": "error_name", "error_description": "Oops!"}
         # For example, if the token is not valid, we will get:
@@ -55,14 +55,14 @@ def _check_errors(response):
         error = data.get("error", "") or data.get("type", "")
         desc = data.get("error_description", "") or data.get("detail", "")
 
-        raise OAuth2Error("Battle.net error: %s (%s)" % (error, desc))
+        raise OAuth2Error(f"Battle.net error: {error} ({desc})")
 
     # The expected output from the API follows this format:
     # {"id": 12345, "battletag": "Example#12345"}
     # The battletag is optional.
     if "id" not in data:
         # If the id is not present, the output is not usable (no UID)
-        raise OAuth2Error("Invalid data from Battle.net API: %r" % (data))
+        raise OAuth2Error(f"Invalid data from Battle.net API: {data!r}")
 
     return data
 
@@ -77,7 +77,8 @@ class BattleNetOAuth2Adapter(OAuth2Adapter):
     Can be any of eu, us, kr, sea, tw or cn
     """
 
-    provider_id = BattleNetProvider.id
+    provider_id = "battlenet"
+
     valid_regions = (
         Region.APAC,
         Region.CN,
@@ -114,25 +115,26 @@ class BattleNetOAuth2Adapter(OAuth2Adapter):
     def battlenet_base_url(self):
         region = self.battlenet_region
         if region == Region.CN:
-            return "https://www.battlenet.com.cn"
-        return "https://%s.battle.net" % (region)
+            return "https://oauth.battlenet.com.cn"
+        return "https://oauth.battle.net"
 
     @property
     def access_token_url(self):
-        return self.battlenet_base_url + "/oauth/token"
+        return f"{self.battlenet_base_url}/token"
 
     @property
     def authorize_url(self):
-        return self.battlenet_base_url + "/oauth/authorize"
+        return f"{self.battlenet_base_url}/authorize"
 
     @property
     def profile_url(self):
-        return self.battlenet_base_url + "/oauth/userinfo"
+        return f"{self.battlenet_base_url}/userinfo"
 
     def complete_login(self, request, app, token, **kwargs):
-        params = {"access_token": token.token}
-        response = requests.get(self.profile_url, params=params)
-        data = _check_errors(response)
+        headers = {"authorization": f"Bearer {token.token}"}
+        with get_adapter().get_requests_session() as sess:
+            response = sess.get(self.profile_url, headers=headers)
+            data = _check_errors(response)
 
         # Add the region to the data so that we can have it in `extra_data`.
         data["region"] = self.battlenet_region
@@ -140,11 +142,11 @@ class BattleNetOAuth2Adapter(OAuth2Adapter):
         return self.get_provider().sociallogin_from_response(request, data)
 
     def get_callback_url(self, request, app):
-        r = super(BattleNetOAuth2Adapter, self).get_callback_url(request, app)
+        r = super().get_callback_url(request, app)
         region = request.GET.get("region", "").lower()
         # Pass the region down to the callback URL if we specified it
         if region and region in self.valid_regions:
-            r += "?region=%s" % (region)
+            r += f"?region={region}"
         return r
 
 
