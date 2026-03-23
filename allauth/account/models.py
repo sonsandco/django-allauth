@@ -48,14 +48,16 @@ class EmailAddress(models.Model):
         verbose_name = _("email address")
         verbose_name_plural = _("email addresses")
         unique_together = [("user", "email")]
+        # Only one primary per user per site
         constraints = [
             UniqueConstraint(
-                fields=["user", "primary"],
+                fields=["site", "user", "primary"],
                 name="unique_primary_email",
                 condition=Q(primary=True),
             )
         ]
         if app_settings.UNIQUE_EMAIL:
+            # Each verified email address unique per site
             constraints.append(
                 UniqueConstraint(
                     fields=["site", "email"],
